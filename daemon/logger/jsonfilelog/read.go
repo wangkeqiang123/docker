@@ -14,6 +14,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/logger"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/filenotify"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonlog"
@@ -53,7 +54,8 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 	l.mu.Lock()
 
 	pth := l.writer.LogPath()
-	var files []io.ReadSeeker
+	var files []io.ReadCloser
+	var readSeekers []io.ReadSeeker
 	for i := l.writer.MaxFiles(); i > 1; i-- {
 		f, err := os.Open(fmt.Sprintf("%s.%d", pth, i-1))
 		if err != nil {
@@ -61,11 +63,48 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 				logWatcher.Err <- err
 				break
 			}
+
+			cf, err := os.Open(fmt.Sprintf("%s.%d.gz", pth, i-1))
+			if err != nil {
+				if !os.IsNotExist(err) {
+					logWatcher.Err <- err
+					break
+				}
+				continue
+			}
+			files = append(files, cf)
+
+			rc, err := archive.DecompressStream(cf)
+			if err != nil {
+				logWatcher.Err <- err
+				break
+			}
+			defer rc.Close()
+
+			tmpFile := fmt.Sprintf("%s.%d.tmp", pth, i-1)
+			rs, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_RDWR, 0640)
+			if err != nil {
+				logWatcher.Err <- err
+				break
+			}
+			defer func() {
+				rs.Close()
+				os.Remove(tmpFile)
+			}()
+
+			_, err = io.Copy(rs, rc)
+			if err != nil {
+				logWatcher.Err <- err
+				break
+			}
+
+			readSeekers = append(readSeekers, rs)
 			continue
 		}
-		defer f.Close()
 
+		defer f.Close()
 		files = append(files, f)
+		readSeekers = append(readSeekers, f)
 	}
 
 	latestFile, err := os.Open(pth)
@@ -77,7 +116,7 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 	defer latestFile.Close()
 
 	if config.Tail != 0 {
-		tailer := ioutils.MultiReadSeeker(append(files, latestFile)...)
+		tailer := ioutils.MultiReadSeeker(append(readSeekers, latestFile)...)
 		tailFile(tailer, logWatcher, config.Tail, config.Since)
 	}
 
