@@ -61,7 +61,8 @@ func New(info logger.Info) (logger.Logger, error) {
 		}
 	}
 
-	writer, err := loggerutils.NewRotateFileWriter(info.LogPath, capval, maxFiles)
+	compress, _ := info.Config["compression"]
+	writer, err := loggerutils.NewRotateFileWriter(info.LogPath, capval, maxFiles, compress)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +120,7 @@ func ValidateLogOpt(cfg map[string]string) error {
 		switch key {
 		case "max-file":
 		case "max-size":
+		case "compression":
 		case "labels":
 		case "env":
 		default:

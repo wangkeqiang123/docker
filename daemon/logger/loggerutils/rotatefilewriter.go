@@ -1,10 +1,13 @@
 package loggerutils
 
 import (
+	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"sync"
 
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/pubsub"
 )
 
@@ -12,14 +15,15 @@ import (
 type RotateFileWriter struct {
 	f            *os.File // store for closing
 	mu           sync.Mutex
-	capacity     int64 //maximum size of each file
-	currentSize  int64 // current size of the latest file
-	maxFiles     int   //maximum number of files
+	capacity     int64  //maximum size of each file
+	currentSize  int64  // current size of the latest file
+	maxFiles     int    //maximum number of files
+	compress     string // whether old versions of log files are compressed
 	notifyRotate *pubsub.Publisher
 }
 
 //NewRotateFileWriter creates new RotateFileWriter
-func NewRotateFileWriter(logPath string, capacity int64, maxFiles int) (*RotateFileWriter, error) {
+func NewRotateFileWriter(logPath string, capacity int64, maxFiles int, compress string) (*RotateFileWriter, error) {
 	log, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0640)
 	if err != nil {
 		return nil, err
@@ -35,6 +39,7 @@ func NewRotateFileWriter(logPath string, capacity int64, maxFiles int) (*RotateF
 		capacity:     capacity,
 		currentSize:  size,
 		maxFiles:     maxFiles,
+		compress:     compress,
 		notifyRotate: pubsub.NewPublisher(0, 1),
 	}, nil
 }
@@ -65,7 +70,7 @@ func (w *RotateFileWriter) checkCapacityAndRotate() error {
 		if err := w.f.Close(); err != nil {
 			return err
 		}
-		if err := rotate(name, w.maxFiles); err != nil {
+		if err := rotate(name, w.maxFiles, w.compress); err != nil {
 			return err
 		}
 		file, err := os.OpenFile(name, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 06400)
@@ -80,21 +85,83 @@ func (w *RotateFileWriter) checkCapacityAndRotate() error {
 	return nil
 }
 
-func rotate(name string, maxFiles int) error {
+func rotate(name string, maxFiles int, compress string) error {
 	if maxFiles < 2 {
 		return nil
 	}
-	for i := maxFiles - 1; i > 1; i-- {
-		toPath := name + "." + strconv.Itoa(i)
-		fromPath := name + "." + strconv.Itoa(i-1)
+
+	extension := ""
+	var compressionAlg archive.Compression
+	if compress != "" {
+		switch compress {
+		case "gzip":
+			compressionAlg = archive.Gzip
+			extension = ".gz"
+		case "bzip2":
+			compressionAlg = archive.Bzip2
+			extension = ".bz"
+		case "xz":
+			compressionAlg = archive.Xz
+			extension = ".xz"
+		default:
+			return fmt.Errorf("unknown compression algorithm %q for json-file", compress)
+		}
+	}
+
+	for i := maxFiles - 1; i > 2; i-- {
+		toPath := name + "." + strconv.Itoa(i) + extension
+		fromPath := name + "." + strconv.Itoa(i-1) + extension
 		if err := os.Rename(fromPath, toPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
 
+	if _, err := os.Stat(name + ".1"); err == nil && maxFiles > 2 {
+		if err := os.Rename(name+".1", name+".2"); err != nil {
+			return err
+		}
+
+		if err := compressFile(name+".2", compressionAlg, extension); err != nil {
+			return err
+		}
+	}
+
+	// The "[name].1" that jast renamed from "[name]" is not compressed
+	// in order to prevent the log tracking tool from losing some historical
+	// log data when a new log file is created.
 	if err := os.Rename(name, name+".1"); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	return nil
+}
+
+func compressFile(fileName string, compression archive.Compression, extension string) (err error) {
+	outFile, err := os.OpenFile(fileName+extension, os.O_CREATE|os.O_RDWR, 0640)
+	defer func() {
+		outFile.Close()
+		if err != nil {
+			os.Remove(fileName + extension)
+		}
+	}()
+
+	if err != nil {
+		return err
+	}
+
+	compressWriter, err := archive.CompressStream(outFile, compression)
+	defer compressWriter.Close()
+
+	fileData, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		return err
+	}
+	_, err = compressWriter.Write(fileData)
+	if err != nil {
+		return err
+	}
+
+	os.Remove(fileName)
+
 	return nil
 }
 
