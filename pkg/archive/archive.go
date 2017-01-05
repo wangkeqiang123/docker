@@ -204,6 +204,35 @@ func DecompressStream(archive io.Reader) (io.ReadCloser, error) {
 	}
 }
 
+// GzipReadSeekerWrapper wraps an io.ReadSeeker for gzip reading
+type GzipReadSeekerWrapper struct {
+	readSeeker io.ReadSeeker
+	*gzip.Reader
+}
+
+// NewGzipReadSeekerWrapper initializes a new GzipReadSeeker
+func NewGzipReadSeekerWrapper(rs io.ReadSeeker) (*GzipReadSeekerWrapper, error) {
+	gzipReader, err := gzip.NewReader(rs)
+	if err != nil {
+		return nil, err
+	}
+	return &GzipReadSeekerWrapper{rs, gzipReader}, nil
+}
+
+// Seek sets the offset for the next Read, and can only seek to the
+// beginning of the file.
+func (g *GzipReadSeekerWrapper) Seek(offset int64, whence int) (int64, error) {
+	if whence != 0 || offset != 0 {
+		return 0, fmt.Errorf("GzipReadSeeker can only seek to beginning of file")
+	}
+	_, err := g.readSeeker.Seek(offset, whence)
+	if err != nil {
+		return 0, err
+	}
+	g.Reset(g.readSeeker)
+	return 0, nil
+}
+
 // CompressStream compresseses the dest with specified compression algorithm.
 func CompressStream(dest io.Writer, compression Compression) (io.WriteCloser, error) {
 	p := pools.BufioWriter32KPool
