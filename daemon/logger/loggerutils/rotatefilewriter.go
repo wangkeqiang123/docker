@@ -1,16 +1,19 @@
 package loggerutils
 
 import (
+	"io"
 	"os"
 	"strconv"
 	"sync"
 
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/pubsub"
 )
 
 // RotateFileWriter is Logger implementation for default Docker logging.
 type RotateFileWriter struct {
-	f            *os.File // store for closing
+	f            io.WriteCloser // store for closing
+	logName      string
 	mu           sync.Mutex
 	capacity     int64 //maximum size of each file
 	currentSize  int64 // current size of the latest file
@@ -30,8 +33,14 @@ func NewRotateFileWriter(logPath string, capacity int64, maxFiles int) (*RotateF
 		return nil, err
 	}
 
+	wc, err := archive.CompressStream(log, archive.Gzip)
+	if err != nil {
+		return nil, err
+	}
+
 	return &RotateFileWriter{
-		f:            log,
+		f:            wc,
+		logName:      log.Name(),
 		capacity:     capacity,
 		currentSize:  size,
 		maxFiles:     maxFiles,
@@ -48,6 +57,7 @@ func (w *RotateFileWriter) Write(message []byte) (int, error) {
 	}
 
 	n, err := w.f.Write(message)
+	//	n, err := writeCloser.Write(message)
 	if err == nil {
 		w.currentSize += int64(n)
 	}
@@ -61,7 +71,7 @@ func (w *RotateFileWriter) checkCapacityAndRotate() error {
 	}
 
 	if w.currentSize >= w.capacity {
-		name := w.f.Name()
+		name := w.logName
 		if err := w.f.Close(); err != nil {
 			return err
 		}
@@ -72,7 +82,13 @@ func (w *RotateFileWriter) checkCapacityAndRotate() error {
 		if err != nil {
 			return err
 		}
-		w.f = file
+
+		wc, err := archive.CompressStream(file, archive.Gzip)
+		if err != nil {
+			return err
+		}
+
+		w.f = wc
 		w.currentSize = 0
 		w.notifyRotate.Publish(struct{}{})
 	}
@@ -100,7 +116,7 @@ func rotate(name string, maxFiles int) error {
 
 // LogPath returns the location the given writer logs to.
 func (w *RotateFileWriter) LogPath() string {
-	return w.f.Name()
+	return w.logName
 }
 
 // MaxFiles return maximum number of files

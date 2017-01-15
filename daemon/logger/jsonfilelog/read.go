@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/logger"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/filenotify"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonlog"
@@ -65,7 +67,21 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 		}
 		defer f.Close()
 
-		files = append(files, f)
+		rc, err := archive.DecompressStream(f)
+		if err != nil {
+			logWatcher.Err <- err
+			break
+		}
+		defer rc.Close()
+
+		fileData, err := ioutil.ReadAll(rc)
+		if err != nil {
+			logWatcher.Err <- err
+			break
+		}
+
+		rs := bytes.NewReader(fileData)
+		files = append(files, rs)
 	}
 
 	latestFile, err := os.Open(pth)

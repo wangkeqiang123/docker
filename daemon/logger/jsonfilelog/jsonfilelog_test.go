@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/docker/docker/daemon/logger"
+	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonlog"
 )
 
@@ -111,11 +113,37 @@ func TestJSONFileLoggerWithOpts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	res, err := ioutil.ReadFile(filename)
+
+	f, err := os.Open(filename)
 	if err != nil {
 		t.Fatal(err)
 	}
-	penUlt, err := ioutil.ReadFile(filename + ".1")
+	defer f.Close()
+
+	eofReader := ioutils.OnEOFReader{Rc: f}
+	rc, err := archive.DecompressStream(eofReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	res, err := ioutil.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f1, err := os.Open(filename + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f1.Close()
+
+	rc1, err := archive.DecompressStream(f1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc1.Close()
+	penUlt, err := ioutil.ReadAll(rc1)
 	if err != nil {
 		t.Fatal(err)
 	}
