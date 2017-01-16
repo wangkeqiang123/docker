@@ -55,7 +55,8 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 	l.mu.Lock()
 
 	pth := l.writer.LogPath()
-	var files []io.ReadSeeker
+	var files []io.ReadCloser
+	var readSeekers []io.ReadSeeker
 	for i := l.writer.MaxFiles(); i > 1; i-- {
 		f, err := os.Open(fmt.Sprintf("%s.%d", pth, i-1))
 		if err != nil {
@@ -72,6 +73,7 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 				}
 				continue
 			}
+			files = append(files, cf)
 
 			rc, err := archive.DecompressStream(cf)
 			if err != nil {
@@ -87,12 +89,13 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 			}
 
 			rs := bytes.NewReader(fileData)
-			files = append(files, rs)
+			readSeekers = append(readSeekers, rs)
 			continue
 		}
 
 		defer f.Close()
 		files = append(files, f)
+		readSeekers = append(readSeekers, f)
 	}
 
 	latestFile, err := os.Open(pth)
@@ -102,9 +105,10 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 		return
 	}
 	defer latestFile.Close()
+	files = append(files, latestFile)
 
 	if config.Tail != 0 {
-		tailer := ioutils.MultiReadSeeker(append(files, latestFile)...)
+		tailer := ioutils.MultiReadSeeker(append(readSeekers, latestFile)...)
 		tailFile(tailer, logWatcher, config.Tail, config.Since)
 	}
 
