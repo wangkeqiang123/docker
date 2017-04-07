@@ -75,23 +75,21 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 			files = append(files, cf)
 
 			rc, err := archive.DecompressStream(cf)
-			//rs, err := archive.NewGzipReadSeekerWrapper(cf)
 			if err != nil {
 				logWatcher.Err <- err
 				break
 			}
 			defer rc.Close()
 
-			tmpFileName := fmt.Sprintf("%s.%d.tmp", pth, i-1)
-			rs, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_RDWR, 0640)
+			tmpFile := fmt.Sprintf("%s.%d.tmp", pth, i-1)
+			rs, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_RDWR, 0640)
 			if err != nil {
 				logWatcher.Err <- err
 				break
 			}
 			defer func() {
 				rs.Close()
-				os.Remove(tmpFileName)
-				logrus.Debugf("########## tmp file removed: %s", tmpFileName)
+				os.Remove(tmpFile)
 			}()
 
 			_, err = io.Copy(rs, rc)
