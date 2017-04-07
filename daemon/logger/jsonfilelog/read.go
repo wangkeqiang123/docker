@@ -74,12 +74,29 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 			}
 			files = append(files, cf)
 
-			rs, err := archive.NewGzipReadSeekerWrapper(cf)
+			rc, err := archive.DecompressStream(cf)
+			//rs, err := archive.NewGzipReadSeekerWrapper(cf)
 			if err != nil {
 				logWatcher.Err <- err
 				break
 			}
-			defer rs.Close()
+			defer rc.Close()
+
+			rs, err := os.OpenFile(fmt.Sprintf("%s.%d.tmp", pth, i-1), os.O_CREATE|os.O_RDWR, 0640)
+			if err != nil {
+				logWatcher.Err <- err
+				break
+			}
+			defer func() {
+				rs.Close()
+				os.Remove(fmt.Sprintf("%s.%d.tmp", pth, i-1))
+			}()
+
+			_, err = io.Copy(rs, rc)
+			if err != nil {
+				logWatcher.Err <- err
+				break
+			}
 
 			readSeekers = append(readSeekers, rs)
 			continue
@@ -146,16 +163,22 @@ func tailFile(f io.ReadSeeker, logWatcher *logger.LogWatcher, tail int, since ti
 		}
 		rdr = bytes.NewBuffer(bytes.Join(ls, []byte("\n")))
 	}
+
 	dec := json.NewDecoder(rdr)
+
 	l := &jsonlog.JSONLog{}
 	for {
 		msg, err := decodeLogLine(dec, l)
 		if err != nil {
+			logrus.Debugf("########## err: %v", err)
 			if err != io.EOF {
 				logWatcher.Err <- err
 			}
 			return
 		}
+
+		logrus.Debugf("########## msg: %v", msg)
+
 		if !since.IsZero() && msg.Timestamp.Before(since) {
 			continue
 		}
