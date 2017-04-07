@@ -90,6 +90,7 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 			defer func() {
 				rs.Close()
 				os.Remove(fmt.Sprintf("%s.%d.tmp", pth, i-1))
+				logrus.Debugf("########## tmp file removed: %s", fmt.Sprintf("%s.%d.tmp", pth, i-1))
 			}()
 
 			_, err = io.Copy(rs, rc)
