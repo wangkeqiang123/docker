@@ -82,15 +82,16 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 			}
 			defer rc.Close()
 
-			rs, err := os.OpenFile(fmt.Sprintf("%s.%d.tmp", pth, i-1), os.O_CREATE|os.O_RDWR, 0640)
+			tmpFileName := fmt.Sprintf("%s.%d.tmp", pth, i-1)
+			rs, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_RDWR, 0640)
 			if err != nil {
 				logWatcher.Err <- err
 				break
 			}
 			defer func() {
 				rs.Close()
-				os.Remove(fmt.Sprintf("%s.%d.tmp", pth, i-1))
-				logrus.Debugf("########## tmp file removed: %s", fmt.Sprintf("%s.%d.tmp", pth, i-1))
+				os.Remove(tmpFileName)
+				logrus.Debugf("########## tmp file removed: %s", tmpFileName)
 			}()
 
 			_, err = io.Copy(rs, rc)
