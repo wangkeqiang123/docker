@@ -98,6 +98,8 @@ func (l *JSONFileLogger) readLogs(logWatcher *logger.LogWatcher, config logger.R
 				break
 			}
 
+			rs.Seek(0, os.SEEK_SET)
+
 			readSeekers = append(readSeekers, rs)
 			continue
 		}
